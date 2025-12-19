@@ -29,13 +29,24 @@ class MyLinearRegression:
         X_b = self._add_intercept(X)
         return np.dot(X_b, self.weights)
 
-    def fit_normal_equation(self, X, y, is_polynomial=False, degree=2):
+    def fit_normal_equation(self, X, y, is_polynomial=False, degree=2, reg_type='None', alpha=0.1):
+        """
+        Solves using Normal Equation (Inverse Matrix).
+        Supports OLS and Ridge (L2). Lasso (L1) requires iterative solvers, so it's not here.
+        """
         X_transformed = self._transform_features(X, is_polynomial, degree)
         X_b = self._add_intercept(X_transformed)
         y = y.flatten()
 
         X_T = X_b.T
         XtX = np.dot(X_T, X_b)
+        
+        # --- RIDGE REGRESSION (L2) ---
+        # Formula: w = (X^T*X + alpha*I)^-1 * X^T*y
+        if reg_type == 'Ridge (L2)':
+            I = np.eye(XtX.shape[0])
+            I[0, 0] = 0  # Do not regularize the bias term (intercept)
+            XtX += alpha * I
         
         try:
             XtX_inv = np.linalg.inv(XtX)
@@ -48,7 +59,11 @@ class MyLinearRegression:
         
         return {"Weights": self.weights}
 
-    def fit_gd_stream(self, X, y, learning_rate=0.01, epochs=100, gd_type='batch', batch_size=32, is_polynomial=False, degree=2):
+    def fit_gd_stream(self, X, y, learning_rate=0.01, epochs=100, gd_type='batch', batch_size=32, is_polynomial=False, degree=2, reg_type='None', alpha=0.1):
+        """
+        Solves using Gradient Descent.
+        Supports OLS, Ridge (L2), and Lasso (L1).
+        """
         X_transformed = self._transform_features(X, is_polynomial, degree)
         y = y.flatten()
         X_b = self._add_intercept(X_transformed)
@@ -59,6 +74,7 @@ class MyLinearRegression:
         gd_type = gd_type.lower()
 
         for i in range(epochs):
+            # 1. Data Selection
             if gd_type == 'batch':
                 X_i, y_i = X_b, y
             elif 'stochastic' in gd_type:
@@ -70,16 +86,42 @@ class MyLinearRegression:
             else:
                 X_i, y_i = X_b, y
 
+            # 2. Prediction & Error
             y_pred = np.dot(X_i, self.weights)
             error = y_pred - y_i
+            
+            # 3. Base Gradient (MSE Derivative)
             gradients = (1 / X_i.shape[0]) * np.dot(X_i.T, error)
+            
+            # 4. Add Regularization Term to Gradient
+            if reg_type == 'Ridge (L2)':
+                # Gradient of L2: alpha * w
+                reg_term = (alpha / m) * self.weights
+                reg_term[0] = 0 # Don't penalize bias
+                gradients += reg_term
+                
+            elif reg_type == 'Lasso (L1)':
+                # Gradient of L1: alpha * sign(w)
+                reg_term = (alpha / m) * np.sign(self.weights)
+                reg_term[0] = 0 # Don't penalize bias
+                gradients += reg_term
+
+            # 5. Update Weights
             self.weights -= learning_rate * gradients
 
+            # 6. Calculate Total Loss (MSE + Penalty) for Visualization
             full_pred = np.dot(X_b, self.weights)
-            loss = np.mean((full_pred - y) ** 2)
-            self.loss_history.append(loss)
+            mse_loss = np.mean((full_pred - y) ** 2)
             
-            yield i, loss, self.loss_history, self.weights
+            total_loss = mse_loss
+            if reg_type == 'Ridge (L2)':
+                total_loss += (alpha / (2*m)) * np.sum(np.square(self.weights[1:]))
+            elif reg_type == 'Lasso (L1)':
+                total_loss += (alpha / m) * np.sum(np.abs(self.weights[1:]))
+                
+            self.loss_history.append(total_loss)
+            
+            yield i, total_loss, self.loss_history, self.weights
 
 
 class MyLogisticRegression:
@@ -204,7 +246,6 @@ class DatasetManager:
 
     def create_synthetic_data(self, n_samples=300, noise=10, type='regression', n_features=1, n_informative=1):
         if type == 'regression':
-           
             X, y = datasets.make_regression(
                 n_samples=n_samples, 
                 n_features=n_features, 
@@ -219,9 +260,7 @@ class DatasetManager:
             
         elif type == 'classification':
             separation = max(0.5, 2.5 - (noise / 5.0))
-
             n_info = min(n_features, n_informative)
-
             n_redundant = 0
             
             X, y = datasets.make_classification(
