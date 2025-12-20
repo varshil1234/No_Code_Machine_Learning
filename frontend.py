@@ -32,7 +32,7 @@ with tab1:
     data_source = st.sidebar.radio("Source", ["Sklearn Dataset", "Create Synthetic", "Upload CSV"])
 
     if data_source == "Sklearn Dataset":
-        d_name = st.sidebar.selectbox("Select", ["Diabetes (Reg)", "California Housing (Reg)", "Iris (Binary Class)", "Breast Cancer (Class)"])
+        d_name = st.sidebar.selectbox("Select", ["Diabetes (Reg)", "California Housing (Reg)", "Iris (Binary Class)", "Breast Cancer (Class)", "Iris (Multi-Class)", "Wine (Multi-Class)"])
         if st.sidebar.button("Load"):
             st.session_state.df_main = st.session_state.dataset_manager.load_sklearn_dataset(d_name)
             
@@ -44,14 +44,17 @@ with tab1:
         
         if d_type == "Regression":
             noise = st.sidebar.slider("Noise Level", 0, 10, 2)
+            if st.sidebar.button("Generate"):
+                st.session_state.df_main = st.session_state.dataset_manager.create_synthetic_data(
+                    n_samples=n, noise=noise, type='regression', n_features=n_feats, n_informative=n_info
+                )
         else:
             noise = st.sidebar.slider("Difficulty (Overlap)", 0, 10, 2)
-        
-        if st.sidebar.button("Generate"):
-            type_key = 'regression' if d_type == "Regression" else 'classification'
-            st.session_state.df_main = st.session_state.dataset_manager.create_synthetic_data(
-                n_samples=n, noise=noise, type=type_key, n_features=n_feats, n_informative=n_info
-            )
+            n_cls = st.sidebar.slider("Number of Classes", 2, 4, 2)
+            if st.sidebar.button("Generate"):
+                st.session_state.df_main = st.session_state.dataset_manager.create_synthetic_data(
+                    n_samples=n, noise=noise, type='classification', n_features=n_feats, n_informative=n_info, n_classes=n_cls
+                )
 
     elif data_source == "Upload CSV":
         up_file = st.sidebar.file_uploader("Upload CSV", type=["csv"])
@@ -79,7 +82,7 @@ with tab1:
             unique_targets = len(np.unique(y))
             problem_type = "Classification" if unique_targets <= 5 else "Regression"
             
-            st.info(f"Detected Problem Type: {problem_type} (Features: {len(features)})")
+            st.info(f"Detected Problem Type: {problem_type} (Classes: {unique_targets}, Features: {len(features)})")
             
             test_pct = st.sidebar.slider("Test Data %", 10, 90, 20)
             X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_pct/100, random_state=42)
@@ -109,8 +112,7 @@ with tab1:
                     reg_mode = st.selectbox("Regularization", ["None", "Ridge (L2)", "Lasso (L1)"])
                     
                     if "Lasso" in reg_mode:
-                        st.error("🚫 Lasso (L1) cannot be solved using the Normal Equation (Exact Matrix Solution).")
-                        st.info("👉 Please switch the 'Choose Approach' option above to **Gradient Descent** to use Lasso.")
+                        st.error("🚫 Lasso (L1) cannot be solved using the Normal Equation.")
                     else:
                         alpha = 0.0
                         if "Ridge" in reg_mode:
@@ -166,7 +168,6 @@ with tab1:
                                 ax.plot([y.min(), y.max()], [y.min(), y.max()], 'r--', lw=2, label='Perfect Fit')
                                 ax.set_xlabel("Actual Values")
                                 ax.set_ylabel("Predicted Values")
-                                ax.legend()
                                 ax.grid(True, alpha=0.3)
                                 st.pyplot(fig)
                             
@@ -180,13 +181,8 @@ with tab1:
                     reg_mode_gd = c_reg1.selectbox("Regularization", ["None", "Ridge (L2)", "Lasso (L1)"])
                     alpha_gd = 0.0
                     reg_key_gd = 'None'
-                    
-                    if "Ridge" in reg_mode_gd:
-                        reg_key_gd = 'Ridge (L2)'
-                        alpha_gd = c_reg2.number_input("Alpha (Lambda)", 0.01, 100.0, 1.0)
-                    elif "Lasso" in reg_mode_gd:
-                        reg_key_gd = 'Lasso (L1)'
-                        alpha_gd = c_reg2.number_input("Alpha (Lambda)", 0.01, 100.0, 1.0)
+                    if "Ridge" in reg_mode_gd: reg_key_gd = 'Ridge (L2)'; alpha_gd = c_reg2.number_input("Alpha", 0.01, 100.0, 1.0)
+                    elif "Lasso" in reg_mode_gd: reg_key_gd = 'Lasso (L1)'; alpha_gd = c_reg2.number_input("Alpha", 0.01, 100.0, 1.0)
                     
                     show_anim = st.checkbox("Show Animation", value=True)
                     speed = st.slider("Speed", 0.0, 0.5, 0.01, disabled=not show_anim)
@@ -204,7 +200,7 @@ with tab1:
                         final_history = []
                         
                         for ep, loss, history, w in model.fit_gd_stream(
-                            X_train_s, y_train, lr, epochs, gd_variant, 32, is_poly, degree,
+                            X_train_s, y_train, lr, epochs, gd_variant, 32, is_poly, degree, 
                             reg_type=reg_key_gd, alpha=alpha_gd
                         ):
                             final_w = w
@@ -304,13 +300,31 @@ with tab1:
                             st.pyplot(fig)
 
             else:
-                class_algo = st.radio("Algorithm", 
-                    ["Perceptron Trick", "Sigmoid Perceptron (SGD)", "Logistic Regression (Batch)"]
-                )
+                if unique_targets > 2:
+                    st.info("Multi-class detected. Defaulting to Softmax Regression.")
+                    class_algo = "Softmax Regression (Multi-Class)"
+                else:
+                    class_algo = st.radio("Algorithm", 
+                        ["Perceptron Trick", "Sigmoid Perceptron (SGD)", "Logistic Regression (Batch)", "Softmax Regression (Multi-Class)"]
+                    )
                 
-                c1, c2 = st.columns(2)
+                c_poly1, c_poly2 = st.columns(2)
+                reg_type_feat = c_poly1.radio("Feature Type", ["Linear", "Polynomial"])
+                degree = 1
+                is_poly = False
+                if reg_type_feat == "Polynomial":
+                    degree = c_poly2.number_input("Degree", 2, 10, 2)
+                    is_poly = True
+
+                c1, c2, c3 = st.columns(3)
                 lr = c1.number_input("Learning Rate", 0.0001, 10.0, 0.1, format="%.4f")
                 epochs = c2.number_input("Epochs", 10, 5000, 500)
+                
+                reg_mode_gd = c3.selectbox("Regularization", ["None", "Ridge (L2)", "Lasso (L1)"])
+                alpha_gd = 0.0
+                reg_key_gd = 'None'
+                if "Ridge" in reg_mode_gd: reg_key_gd = 'Ridge (L2)'; alpha_gd = st.number_input("Alpha", 0.01, 100.0, 1.0)
+                elif "Lasso" in reg_mode_gd: reg_key_gd = 'Lasso (L1)'; alpha_gd = st.number_input("Alpha", 0.01, 100.0, 1.0)
                 
                 show_anim = st.checkbox("Show Animation", value=True)
                 speed = st.slider("Speed", 0.0, 0.5, 0.01, disabled=not show_anim)
@@ -330,9 +344,11 @@ with tab1:
                     if "Perceptron Trick" in class_algo:
                         stream = model.fit_perceptron_trick(X_train_s, y_train, lr, epochs)
                     elif "Sigmoid" in class_algo:
-                        stream = model.fit_sigmoid_perceptron(X_train_s, y_train, lr, epochs)
+                        stream = model.fit_sigmoid_perceptron(X_train_s, y_train, lr, epochs, is_polynomial=is_poly, degree=degree)
+                    elif "Softmax" in class_algo:
+                        stream = model.fit_softmax(X_train_s, y_train, lr, epochs, is_polynomial=is_poly, degree=degree, reg_type=reg_key_gd, alpha=alpha_gd)
                     else:
-                        stream = model.fit_batch_logistic(X_train_s, y_train, lr, epochs)
+                        stream = model.fit_batch_logistic(X_train_s, y_train, lr, epochs, is_polynomial=is_poly, degree=degree, reg_type=reg_key_gd, alpha=alpha_gd)
                     
                     final_w = None
                     final_hist = []
@@ -340,7 +356,6 @@ with tab1:
                     for ep, loss, history, w in stream:
                         final_w = w
                         final_hist = history
-                        
                         if show_anim and ep % 5 == 0:
                             fig_l, ax_l = plt.subplots(figsize=(5, 3))
                             ax_l.plot(history, 'r-', label='Loss')
@@ -350,36 +365,28 @@ with tab1:
                             loss_placeholder.pyplot(fig_l)
                             plt.close(fig_l)
                             
-                            if len(features) == 1:
+                            if len(features) == 2:
                                 fig_f, ax_f = plt.subplots(figsize=(5, 3))
-                                ax_f.scatter(X_train_s, y_train, c=y_train, cmap='bwr', alpha=0.6)
-                                x_line = np.linspace(X_train_s.min(), X_train_s.max(), 100).reshape(-1, 1)
-                                z = w[0] + w[1] * x_line
-                                y_line = 1 / (1 + np.exp(-z))
-                                ax_f.plot(x_line, y_line, 'k-', lw=2)
+                                x_min, x_max = X_train_s[:,0].min()-1, X_train_s[:,0].max()+1
+                                y_min, y_max = X_train_s[:,1].min()-1, X_train_s[:,1].max()+1
+                                xx, yy = np.meshgrid(np.arange(x_min, x_max, 0.1), np.arange(y_min, y_max, 0.1))
+                                mesh_input = np.c_[xx.ravel(), yy.ravel()]
+                                Z = model.predict(mesh_input, is_polynomial=is_poly)
+                                Z = Z.reshape(xx.shape)
+                                ax_f.contourf(xx, yy, Z, alpha=0.3, cmap='viridis')
+                                ax_f.scatter(X_train_s[:,0], X_train_s[:,1], c=y_train, cmap='viridis', edgecolors='k', alpha=0.6)
+                                ax_f.set_title("Decision Boundary")
                                 plot_placeholder.pyplot(fig_f)
                                 plt.close(fig_f)
-
-                            elif len(features) == 2:
-                                fig_f, ax_f = plt.subplots(figsize=(5, 3))
-                                ax_f.scatter(X_train_s[:,0], X_train_s[:,1], c=y_train, cmap='bwr', alpha=0.6)
-                                x_min, x_max = X_train_s[:,0].min()-0.5, X_train_s[:,0].max()+0.5
-                                if w[2] != 0:
-                                    x_vals = np.array([x_min, x_max])
-                                    y_vals = -(w[1] * x_vals + w[0]) / w[2]
-                                    ax_f.plot(x_vals, y_vals, 'k--', lw=2)
-                                    ax_f.set_ylim(X_train_s[:,1].min()-1, X_train_s[:,1].max()+1)
-                                plot_placeholder.pyplot(fig_f)
-                                plt.close(fig_f)
-                                
                             time.sleep(speed)
                         progress.progress((ep+1)/epochs)
 
-                    y_pred = model.predict(X_test_s)
+                    y_pred = model.predict(X_test_s, is_polynomial=is_poly)
                     acc = accuracy_score(y_test, y_pred)
-                    prec = precision_score(y_test, y_pred, zero_division=0)
-                    rec = recall_score(y_test, y_pred, zero_division=0)
-                    f1 = f1_score(y_test, y_pred, zero_division=0)
+                    avg_method = 'weighted' if unique_targets > 2 else 'binary'
+                    prec = precision_score(y_test, y_pred, average=avg_method, zero_division=0)
+                    rec = recall_score(y_test, y_pred, average=avg_method, zero_division=0)
+                    f1 = f1_score(y_test, y_pred, average=avg_method, zero_division=0)
                     
                     st.success("Training Finished")
                     st.subheader("Classification Metrics")
@@ -404,63 +411,46 @@ with tab1:
                     if len(features) == 2:
                         c_train, c_test = st.columns(2)
                         
+                        def plot_boundary(ax, X_data, y_data, title):
+                            x_min, x_max = X_data[:,0].min()-1, X_data[:,0].max()+1
+                            y_min, y_max = X_data[:,1].min()-1, X_data[:,1].max()+1
+                            xx, yy = np.meshgrid(np.arange(x_min, x_max, 0.1), np.arange(y_min, y_max, 0.1))
+                            mesh_input = np.c_[xx.ravel(), yy.ravel()]
+                            Z = model.predict(mesh_input, is_polynomial=is_poly)
+                            Z = Z.reshape(xx.shape)
+                            ax.contourf(xx, yy, Z, alpha=0.3, cmap='viridis')
+                            ax.scatter(X_data[:,0], X_data[:,1], c=y_data, cmap='viridis', edgecolors='k')
+                            ax.set_title(title)
+
                         with c_train:
-                            st.markdown("**Training Data**")
                             fig_tr, ax_tr = plt.subplots(figsize=(6, 4))
-                            ax_tr.scatter(X_train_s[:,0], X_train_s[:,1], c=y_train, cmap='bwr', label='Train Points')
-                            
-                            x_min, x_max = X_train_s[:,0].min()-1, X_train_s[:,0].max()+1
-                            if final_w[2] != 0:
-                                x_vals = np.array([x_min, x_max])
-                                y_vals = -(final_w[1] * x_vals + final_w[0]) / final_w[2]
-                                ax_tr.plot(x_vals, y_vals, 'k--', lw=2, label='Boundary')
-                            
-                            ax_tr.set_ylim(X_train_s[:,1].min()-1, X_train_s[:,1].max()+1)
-                            ax_tr.set_title("Train Fit")
-                            ax_tr.legend()
+                            plot_boundary(ax_tr, X_train_s, y_train, "Train Fit")
                             st.pyplot(fig_tr)
                             
                         with c_test:
-                            st.markdown("**Testing Data**")
                             fig_ts, ax_ts = plt.subplots(figsize=(6, 4))
-                            ax_ts.scatter(X_test_s[:,0], X_test_s[:,1], c=y_test, cmap='bwr', marker='x', label='Test Points')
-                            
-                            x_min_t, x_max_t = X_test_s[:,0].min()-1, X_test_s[:,0].max()+1
-                            if final_w[2] != 0:
-                                x_vals_t = np.array([x_min_t, x_max_t])
-                                y_vals_t = -(final_w[1] * x_vals_t + final_w[0]) / final_w[2]
-                                ax_ts.plot(x_vals_t, y_vals_t, 'k--', lw=2, label='Boundary')
-                                
-                            ax_ts.set_ylim(X_test_s[:,1].min()-1, X_test_s[:,1].max()+1)
-                            ax_ts.set_title("Test Fit")
-                            ax_ts.legend()
+                            plot_boundary(ax_ts, X_test_s, y_test, "Test Fit")
                             st.pyplot(fig_ts)
 
-                    elif len(features) == 1:
+                    elif len(features) == 1 and not is_poly and unique_targets == 2:
                         c_train, c_test = st.columns(2)
-                        
                         with c_train:
                             st.markdown("**Training Data**")
                             fig_tr, ax_tr = plt.subplots(figsize=(6, 4))
-                            ax_tr.scatter(X_train_s, y_train, c=y_train, cmap='bwr', label='Train Points')
-                            
-                            x_line = np.linspace(X_train_s.min(), X_train_s.max(), 100).reshape(-1, 1)
-                            z = final_w[0] + final_w[1] * x_line
-                            y_line = 1 / (1 + np.exp(-z))
-                            ax_tr.plot(x_line, y_line, 'k-', lw=2, label='Sigmoid')
-                            ax_tr.legend()
+                            ax_tr.scatter(X_train_s, y_train, c=y_train, cmap='viridis', label='Train')
+                            x_l = np.linspace(X_train_s.min(), X_train_s.max(), 100).reshape(-1, 1)
+                            y_l = model.predict_proba(x_l, is_polynomial=False)
+                            ax_tr.plot(x_l, y_l, 'k-', lw=2)
+                            ax_tr.set_title("Train Fit (Sigmoid)")
                             st.pyplot(fig_tr)
-                            
                         with c_test:
                             st.markdown("**Testing Data**")
                             fig_ts, ax_ts = plt.subplots(figsize=(6, 4))
-                            ax_ts.scatter(X_test_s, y_test, c=y_test, cmap='bwr', marker='x', label='Test Points')
-                            
-                            x_line_t = np.linspace(X_test_s.min(), X_test_s.max(), 100).reshape(-1, 1)
-                            z_t = final_w[0] + final_w[1] * x_line_t
-                            y_line_t = 1 / (1 + np.exp(-z_t))
-                            ax_ts.plot(x_line_t, y_line_t, 'k-', lw=2, label='Sigmoid')
-                            ax_ts.legend()
+                            ax_ts.scatter(X_test_s, y_test, c=y_test, cmap='viridis', label='Test')
+                            x_l = np.linspace(X_test_s.min(), X_test_s.max(), 100).reshape(-1, 1)
+                            y_l = model.predict_proba(x_l, is_polynomial=False)
+                            ax_ts.plot(x_l, y_l, 'k-', lw=2)
+                            ax_ts.set_title("Test Fit (Sigmoid)")
                             st.pyplot(fig_ts)
                             
                     else:
@@ -477,131 +467,68 @@ with tab2:
     
     st.header("1. Simple Linear Regression")
     st.markdown("""
-    **Goal:** Find the best fit line $\hat{y} = wx + b$ that minimizes error.
-    
-    **Hypothesis Formulation:**
-    $$ h_\\theta(x) = \\theta_0 + \\theta_1 x $$
-    Where:
-    * $\\theta_0$ is the bias (intercept) $b$.
-    * $\\theta_1$ is the weight (slope) $w$.
-    
-    **Cost Function (Mean Squared Error - MSE):**
+    **Goal:** Find $\hat{y} = wx + b$ that minimizes MSE.
     $$ J(\\theta) = \\frac{1}{m} \\sum_{i=1}^{m} (h_\\theta(x^{(i)}) - y^{(i)})^2 $$
-    The goal is to minimize $J(\\theta)$.
     """)
-    
-
     st.divider()
     
-    st.header("2. Normal Equation (Closed Form Solution)")
+    st.header("2. Normal Equation")
     st.markdown("""
-    Instead of iterating, we can solve for $\\theta$ mathematically in one step by setting the derivative of the cost function to zero.
-    
-    **Derivation:**
-    1. Matrix notation for hypothesis: $Y = X\\theta$
-    2. Cost function in matrix form:
-       $$ J(\\theta) = (X\\theta - y)^T (X\\theta - y) $$
-    3. Take derivative with respect to $\\theta$ and set to 0:
-       $$ \\nabla_\\theta J(\\theta) = 2X^T X \\theta - 2X^T y = 0 $$
-    4. Solve for $\\theta$:
-       $$ X^T X \\theta = X^T y $$
-       $$ \\theta = (X^T X)^{-1} X^T y $$
-    
-    *Note: This works best for smaller datasets where calculating the inverse of $(X^T X)$ is computationally feasible.*
+    **Closed Form Solution:**
+    $$ \\theta = (X^T X)^{-1} X^T y $$
     """)
-    
-
     st.divider()
     
-    st.header("3. Gradient Descent (Iterative Solution)")
+    st.header("3. Gradient Descent")
     st.markdown("""
-    When data is huge, finding the inverse matrix is slow. Gradient Descent "walks" down the error hill step-by-step.
-    
-    **Update Rule:**
-    Repeat until convergence:
+    **Iterative Update:**
     $$ \\theta_j := \\theta_j - \\alpha \\frac{\\partial}{\\partial \\theta_j} J(\\theta) $$
-    
-    **Derivative Calculation:**
-    $$ \\frac{\\partial}{\\partial \\theta_j} J(\\theta) = \\frac{2}{m} \\sum_{i=1}^{m} (h_\\theta(x^{(i)}) - y^{(i)}) x_j^{(i)} $$
-    
-    So the update step becomes:
-    $$ \\theta = \\theta - \\alpha \\cdot \\frac{2}{m} X^T (X\\theta - y) $$
     """)
-    
-
     st.divider()
     
-    st.header("4. Ridge Regression (L2 Regularization)")
+    st.header("4. Ridge Regression (L2)")
     st.markdown("""
-    **Goal:** Prevent overfitting by punishing large weights. We add a "penalty" term to the cost function.
-    
     **Cost Function:**
-    $$ J(\\theta) = \\text{MSE} + \\lambda \\sum_{j=1}^{n} \\theta_j^2 $$
-    (Note: We do not penalize the bias term $\\theta_0$).
-    
-    **Gradient Update Rule:**
-    $$ \\theta_j := \\theta_j - \\alpha [ \\text{Original Gradient} + 2\\lambda \\theta_j ] $$
-    
-    **Normal Equation for Ridge:**
-    $$ \\theta = (X^T X + \\lambda I)^{-1} X^T y $$
-    Where $I$ is the Identity Matrix (with 0 at index [0,0] to ignore bias).
+    $$ J(\\theta) = \\text{MSE} + \\lambda \\sum \\theta_j^2 $$
+    **Update Rule:**
+    $$ \\theta_j := \\theta_j - \\alpha [ \\text{Gradient} + 2\\lambda \\theta_j ] $$
     """)
-    
-
     st.divider()
     
-    st.header("5. Lasso Regression (L1 Regularization)")
+    st.header("5. Lasso Regression (L1)")
     st.markdown("""
-    **Goal:** Shrink coefficients to exactly zero (Feature Selection).
-    
     **Cost Function:**
-    $$ J(\\theta) = \\text{MSE} + \\lambda \\sum_{j=1}^{n} |\\theta_j| $$
-    
-    **Gradient Issue:**
-    The absolute value function $|x|$ is essentially a V-shape. It is not differentiable at exactly 0.
-    
-    **Sub-Gradient Update Rule:**
-    $$ \\theta_j := \\theta_j - \\alpha [ \\text{Original Gradient} + \\lambda \\cdot \\text{sign}(\\theta_j) ] $$
+    $$ J(\\theta) = \\text{MSE} + \\lambda \\sum |\\theta_j| $$
+    **Update Rule:**
+    $$ \\theta_j := \\theta_j - \\alpha [ \\text{Gradient} + \\lambda \\cdot \\text{sign}(\\theta_j) ] $$
     """)
-    
-
     st.divider()
     
     st.header("6. Logistic Regression")
     st.markdown("""
-    **Goal:** Classification (0 or 1). We squash the linear output into a probability between 0 and 1.
-    
-    **Sigmoid Function:**
+    **Sigmoid:**
     $$ g(z) = \\frac{1}{1 + e^{-z}} $$
-    
-    **Hypothesis:**
-    $$ h_\\theta(x) = g(\\theta^T x) $$
-    
-    **Cost Function (Log Loss):**
-    We cannot use MSE (it makes the curve "wavy" and non-convex). We use Log Loss:
+    **Log Loss:**
     $$ J(\\theta) = -\\frac{1}{m} \\sum [ y^{(i)} \\log(h_\\theta(x^{(i)})) + (1-y^{(i)}) \\log(1 - h_\\theta(x^{(i)})) ] $$
-    
-    **Gradient Descent Update:**
-    Surprisingly, the derivative ends up looking exactly like Linear Regression:
-    $$ \\frac{\\partial J}{\\partial \\theta} = \\frac{1}{m} X^T (h_\\theta(x) - y) $$
     """)
-    
-
     st.divider()
     
-    st.header("7. Perceptron Trick")
+    st.header("7. Softmax Regression (Multi-Class)")
     st.markdown("""
-    The simplest classification algorithm. It doesn't use probabilities, just a hard cutoff.
+    **Goal:** Classify into $K$ classes ($y \\in \{1, ..., K\}$).
     
-    **Decision Boundary:**
-    $$ \\hat{y} = 1 \\quad \\text{if } \\theta^T x \\ge 0 \\quad \\text{else } 0 $$
+    **Softmax Function:**
+    Calculates probability for class $k$:
+    $$ P(y=k|x) = \\frac{e^{z_k}}{\\sum_{j=1}^{K} e^{z_j}} $$
     
-    **Update Rule (Only on Misclassification):**
-    1. Pick a random point $(x, y)$.
-    2. If prediction is correct, do nothing.
-    3. If prediction is wrong:
-       * If actual is 1 but predicted 0: **Add** vector $x$ to weights.
-       * If actual is 0 but predicted 1: **Subtract** vector $x$ from weights.
-       
-    $$ \\theta := \\theta + \\alpha (y - \\hat{y}) x $$
+    **Cost Function (Cross Entropy):**
+    $$ J(\\theta) = - \\sum_{i=1}^{m} \\sum_{k=1}^{K} 1\\{y^{(i)} = k\\} \\log \\frac{e^{\\theta_k^T x^{(i)}}}{\\sum_{j=1}^K e^{\\theta_j^T x^{(i)}}} $$
+    """)
+    st.divider()
+    
+    st.header("8. Polynomial Regression / Classification")
+    st.markdown("""
+    **Concept:** Transform input features into higher order terms to capture non-linear relationships.
+    If input is $x$, degree 2 polynomial features are $[1, x, x^2]$.
+    The algorithm (Linear or Logistic) remains the same, but acts on these transformed features.
     """)

@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from sklearn import datasets
-from sklearn.preprocessing import PolynomialFeatures
+from sklearn.preprocessing import PolynomialFeatures, OneHotEncoder
 
 class MyLinearRegression:
     def __init__(self):
@@ -30,10 +30,6 @@ class MyLinearRegression:
         return np.dot(X_b, self.weights)
 
     def fit_normal_equation(self, X, y, is_polynomial=False, degree=2, reg_type='None', alpha=0.1):
-        """
-        Solves using Normal Equation (Inverse Matrix).
-        Supports OLS and Ridge (L2). Lasso (L1) requires iterative solvers, so it's not here.
-        """
         X_transformed = self._transform_features(X, is_polynomial, degree)
         X_b = self._add_intercept(X_transformed)
         y = y.flatten()
@@ -41,11 +37,9 @@ class MyLinearRegression:
         X_T = X_b.T
         XtX = np.dot(X_T, X_b)
         
-        # --- RIDGE REGRESSION (L2) ---
-        # Formula: w = (X^T*X + alpha*I)^-1 * X^T*y
         if reg_type == 'Ridge (L2)':
             I = np.eye(XtX.shape[0])
-            I[0, 0] = 0  # Do not regularize the bias term (intercept)
+            I[0, 0] = 0
             XtX += alpha * I
         
         try:
@@ -60,10 +54,6 @@ class MyLinearRegression:
         return {"Weights": self.weights}
 
     def fit_gd_stream(self, X, y, learning_rate=0.01, epochs=100, gd_type='batch', batch_size=32, is_polynomial=False, degree=2, reg_type='None', alpha=0.1):
-        """
-        Solves using Gradient Descent.
-        Supports OLS, Ridge (L2), and Lasso (L1).
-        """
         X_transformed = self._transform_features(X, is_polynomial, degree)
         y = y.flatten()
         X_b = self._add_intercept(X_transformed)
@@ -74,7 +64,6 @@ class MyLinearRegression:
         gd_type = gd_type.lower()
 
         for i in range(epochs):
-            # 1. Data Selection
             if gd_type == 'batch':
                 X_i, y_i = X_b, y
             elif 'stochastic' in gd_type:
@@ -86,30 +75,21 @@ class MyLinearRegression:
             else:
                 X_i, y_i = X_b, y
 
-            # 2. Prediction & Error
             y_pred = np.dot(X_i, self.weights)
             error = y_pred - y_i
-            
-            # 3. Base Gradient (MSE Derivative)
             gradients = (1 / X_i.shape[0]) * np.dot(X_i.T, error)
             
-            # 4. Add Regularization Term to Gradient
             if reg_type == 'Ridge (L2)':
-                # Gradient of L2: alpha * w
                 reg_term = (alpha / m) * self.weights
-                reg_term[0] = 0 # Don't penalize bias
+                reg_term[0] = 0 
                 gradients += reg_term
-                
             elif reg_type == 'Lasso (L1)':
-                # Gradient of L1: alpha * sign(w)
                 reg_term = (alpha / m) * np.sign(self.weights)
-                reg_term[0] = 0 # Don't penalize bias
+                reg_term[0] = 0 
                 gradients += reg_term
 
-            # 5. Update Weights
             self.weights -= learning_rate * gradients
 
-            # 6. Calculate Total Loss (MSE + Penalty) for Visualization
             full_pred = np.dot(X_b, self.weights)
             mse_loss = np.mean((full_pred - y) ** 2)
             
@@ -128,24 +108,49 @@ class MyLogisticRegression:
     def __init__(self):
         self.weights = None
         self.loss_history = []
+        self.poly = None
+        self.is_softmax = False
         
     def _sigmoid(self, z):
         return 1 / (1 + np.exp(-z))
+    
+    def _softmax(self, z):
+        exp_z = np.exp(z - np.max(z, axis=1, keepdims=True))
+        return exp_z / np.sum(exp_z, axis=1, keepdims=True)
         
     def _add_intercept(self, X):
         intercept = np.ones((X.shape[0], 1))
         return np.concatenate((intercept, X), axis=1)
+
+    def _transform_features(self, X, is_polynomial=False, degree=2):
+        if is_polynomial:
+            self.poly = PolynomialFeatures(degree=degree, include_bias=False)
+            return self.poly.fit_transform(X)
+        return X
         
-    def predict_proba(self, X):
+    def predict_proba(self, X, is_polynomial=False):
         if self.weights is None:
             return None
-        X_b = self._add_intercept(X)
-        return self._sigmoid(np.dot(X_b, self.weights))
         
-    def predict(self, X):
-        return (self.predict_proba(X) >= 0.5).astype(int)
+        if is_polynomial and self.poly:
+            X = self.poly.transform(X)
+
+        X_b = self._add_intercept(X)
+        
+        if self.is_softmax:
+            return self._softmax(np.dot(X_b, self.weights))
+        else:
+            return self._sigmoid(np.dot(X_b, self.weights))
+        
+    def predict(self, X, is_polynomial=False):
+        probs = self.predict_proba(X, is_polynomial)
+        if self.is_softmax:
+            return np.argmax(probs, axis=1)
+        else:
+            return (probs >= 0.5).astype(int)
 
     def fit_perceptron_trick(self, X, y, learning_rate=0.1, epochs=1000):
+        self.is_softmax = False
         X_b = self._add_intercept(X)
         y = y.flatten()
         m, n = X_b.shape
@@ -171,8 +176,10 @@ class MyLogisticRegression:
             
             yield i, loss, self.loss_history, self.weights
 
-    def fit_sigmoid_perceptron(self, X, y, learning_rate=0.1, epochs=1000):
-        X_b = self._add_intercept(X)
+    def fit_sigmoid_perceptron(self, X, y, learning_rate=0.1, epochs=1000, is_polynomial=False, degree=2):
+        self.is_softmax = False
+        X_tr = self._transform_features(X, is_polynomial, degree)
+        X_b = self._add_intercept(X_tr)
         y = y.flatten()
         m, n = X_b.shape
         self.weights = np.zeros(n)
@@ -197,8 +204,10 @@ class MyLogisticRegression:
             
             yield i, loss, self.loss_history, self.weights
             
-    def fit_batch_logistic(self, X, y, learning_rate=0.1, epochs=1000):
-        X_b = self._add_intercept(X)
+    def fit_batch_logistic(self, X, y, learning_rate=0.1, epochs=1000, is_polynomial=False, degree=2, reg_type='None', alpha=0.1):
+        self.is_softmax = False
+        X_tr = self._transform_features(X, is_polynomial, degree)
+        X_b = self._add_intercept(X_tr)
         y = y.flatten()
         m, n = X_b.shape
         self.weights = np.zeros(n)
@@ -209,10 +218,69 @@ class MyLogisticRegression:
             y_hat = self._sigmoid(z)
             
             gradient = np.dot(X_b.T, (y_hat - y)) / m
+            
+            if reg_type == 'Ridge (L2)':
+                reg_term = (alpha / m) * self.weights
+                reg_term[0] = 0
+                gradient += reg_term
+            elif reg_type == 'Lasso (L1)':
+                reg_term = (alpha / m) * np.sign(self.weights)
+                reg_term[0] = 0
+                gradient += reg_term
+
             self.weights -= learning_rate * gradient
             
             epsilon = 1e-15
             loss = -np.mean(y * np.log(y_hat + epsilon) + (1 - y) * np.log(1 - y_hat + epsilon))
+            
+            if reg_type == 'Ridge (L2)':
+                loss += (alpha / (2*m)) * np.sum(np.square(self.weights[1:]))
+            elif reg_type == 'Lasso (L1)':
+                loss += (alpha / m) * np.sum(np.abs(self.weights[1:]))
+
+            self.loss_history.append(loss)
+            
+            yield i, loss, self.loss_history, self.weights
+
+    def fit_softmax(self, X, y, learning_rate=0.1, epochs=1000, is_polynomial=False, degree=2, reg_type='None', alpha=0.1):
+        self.is_softmax = True
+        X_tr = self._transform_features(X, is_polynomial, degree)
+        X_b = self._add_intercept(X_tr)
+        m, n_feats = X_b.shape
+        
+        encoder = OneHotEncoder(sparse_output=False)
+        y_encoded = encoder.fit_transform(y.reshape(-1, 1))
+        n_classes = y_encoded.shape[1]
+        
+        self.weights = np.zeros((n_feats, n_classes))
+        self.loss_history = []
+        
+        for i in range(epochs):
+            z = np.dot(X_b, self.weights)
+            y_hat = self._softmax(z)
+            
+            error = y_hat - y_encoded
+            gradients = np.dot(X_b.T, error) / m
+            
+            if reg_type == 'Ridge (L2)':
+                reg_term = (alpha / m) * self.weights
+                reg_term[0, :] = 0
+                gradients += reg_term
+            elif reg_type == 'Lasso (L1)':
+                reg_term = (alpha / m) * np.sign(self.weights)
+                reg_term[0, :] = 0
+                gradients += reg_term
+                
+            self.weights -= learning_rate * gradients
+            
+            epsilon = 1e-15
+            loss = -np.mean(np.sum(y_encoded * np.log(y_hat + epsilon), axis=1))
+            
+            if reg_type == 'Ridge (L2)':
+                loss += (alpha / (2*m)) * np.sum(np.square(self.weights[1:, :]))
+            elif reg_type == 'Lasso (L1)':
+                loss += (alpha / m) * np.sum(np.abs(self.weights[1:, :]))
+                
             self.loss_history.append(loss)
             
             yield i, loss, self.loss_history, self.weights
@@ -242,9 +310,19 @@ class DatasetManager:
             df = pd.DataFrame(data.data, columns=data.feature_names)
             df['target'] = data.target
             return df
+        elif name == "Iris (Multi-Class)":
+            data = datasets.load_iris()
+            df = pd.DataFrame(data.data, columns=data.feature_names)
+            df['target'] = data.target
+            return df
+        elif name == "Wine (Multi-Class)":
+            data = datasets.load_wine()
+            df = pd.DataFrame(data.data, columns=data.feature_names)
+            df['target'] = data.target
+            return df
         return None
 
-    def create_synthetic_data(self, n_samples=300, noise=10, type='regression', n_features=1, n_informative=1):
+    def create_synthetic_data(self, n_samples=300, noise=10, type='regression', n_features=1, n_informative=1, n_classes=2):
         if type == 'regression':
             X, y = datasets.make_regression(
                 n_samples=n_samples, 
@@ -268,8 +346,9 @@ class DatasetManager:
                 n_features=n_features, 
                 n_redundant=n_redundant, 
                 n_informative=n_info, 
+                n_classes=n_classes,
+                n_clusters_per_class=1,
                 random_state=42, 
-                n_clusters_per_class=1, 
                 class_sep=separation
             )
             cols = [f"Feature_{i+1}" for i in range(n_features)]
