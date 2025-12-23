@@ -2,6 +2,9 @@ import numpy as np
 import pandas as pd
 from sklearn import datasets
 from sklearn.preprocessing import PolynomialFeatures, OneHotEncoder
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+from sklearn.ensemble import VotingClassifier, VotingRegressor
+from sklearn.linear_model import LinearRegression, LogisticRegression, Ridge, Lasso, SGDClassifier, SGDRegressor
 
 class MyLinearRegression:
     def __init__(self):
@@ -284,6 +287,64 @@ class MyLogisticRegression:
             self.loss_history.append(loss)
             
             yield i, loss, self.loss_history, self.weights
+
+
+class MyDecisionTree:
+    def __init__(self, mode='classification', max_depth=None, min_samples_split=2, criterion='gini'):
+        self.mode = mode
+        self.max_depth = max_depth
+        self.min_samples_split = min_samples_split
+        self.criterion = criterion
+        self.model = None
+        self.tree_rules = ""
+
+    def fit(self, X, y):
+        if self.mode == 'classification':
+            self.model = DecisionTreeClassifier(
+                max_depth=self.max_depth, 
+                min_samples_split=self.min_samples_split,
+                criterion=self.criterion,
+                random_state=42
+            )
+        else:
+            self.model = DecisionTreeRegressor(
+                max_depth=self.max_depth, 
+                min_samples_split=self.min_samples_split,
+                criterion=self.criterion,
+                random_state=42
+            )
+        self.model.fit(X, y)
+        return self
+
+    def predict(self, X):
+        return self.model.predict(X)
+        
+    def predict_proba(self, X):
+        if self.mode == 'classification':
+            return self.model.predict_proba(X)
+        return None
+
+    def get_text_tree(self, feature_names):
+        from sklearn.tree import export_text
+        return export_text(self.model, feature_names=feature_names)
+
+class MyVotingEnsemble:
+    def __init__(self, estimators, voting_type='hard'):
+        self.estimators = estimators
+        self.voting_type = voting_type
+        self.model = None
+        
+    def fit(self, X, y, mode='classification'):
+        if mode == 'classification':
+            self.model = VotingClassifier(estimators=self.estimators, voting=self.voting_type)
+        else:
+            self.model = VotingRegressor(estimators=self.estimators)
+        
+        self.model.fit(X, y)
+        return self
+        
+    def predict(self, X):
+        return self.model.predict(X)
 
 
 class DatasetManager:
