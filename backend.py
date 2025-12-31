@@ -3,8 +3,17 @@ import pandas as pd
 from sklearn import datasets
 from sklearn.preprocessing import PolynomialFeatures, OneHotEncoder
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
-from sklearn.ensemble import VotingClassifier, VotingRegressor
-from sklearn.linear_model import LinearRegression, LogisticRegression, Ridge, Lasso, SGDClassifier, SGDRegressor
+from sklearn.ensemble import (
+    VotingClassifier, VotingRegressor, 
+    BaggingClassifier, BaggingRegressor,
+    GradientBoostingClassifier, GradientBoostingRegressor,
+    AdaBoostClassifier, AdaBoostRegressor
+)
+from sklearn.linear_model import LinearRegression, LogisticRegression, Ridge, Lasso
+from sklearn.cluster import KMeans
+from sklearn.datasets import make_blobs
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import silhouette_score
 
 class MyLinearRegression:
     def __init__(self):
@@ -289,6 +298,7 @@ class MyLogisticRegression:
             yield i, loss, self.loss_history, self.weights
 
 
+
 class MyDecisionTree:
     def __init__(self, mode='classification', max_depth=None, min_samples_split=2, criterion='gini'):
         self.mode = mode
@@ -296,7 +306,6 @@ class MyDecisionTree:
         self.min_samples_split = min_samples_split
         self.criterion = criterion
         self.model = None
-        self.tree_rules = ""
 
     def fit(self, X, y):
         if self.mode == 'classification':
@@ -319,11 +328,6 @@ class MyDecisionTree:
     def predict(self, X):
         return self.model.predict(X)
         
-    def predict_proba(self, X):
-        if self.mode == 'classification':
-            return self.model.predict_proba(X)
-        return None
-
     def get_text_tree(self, feature_names):
         from sklearn.tree import export_text
         return export_text(self.model, feature_names=feature_names)
@@ -346,6 +350,76 @@ class MyVotingEnsemble:
     def predict(self, X):
         return self.model.predict(X)
 
+class MyEnsembleWrapper:
+    def __init__(self, mode='classification', algo='bagging', n_estimators=50, learning_rate=1.0):
+        self.mode = mode
+        self.algo = algo
+        self.n_estimators = n_estimators
+        self.learning_rate = learning_rate
+        self.model = None
+    
+    def fit(self, X, y):
+        if self.mode == 'classification':
+            if self.algo == 'bagging':
+                self.model = BaggingClassifier(n_estimators=self.n_estimators, random_state=42)
+            elif self.algo == 'adaboost':
+                self.model = AdaBoostClassifier(n_estimators=self.n_estimators, learning_rate=self.learning_rate, random_state=42)
+            elif self.algo == 'gradient_boosting':
+                self.model = GradientBoostingClassifier(n_estimators=self.n_estimators, learning_rate=self.learning_rate, random_state=42)
+        else:
+            if self.algo == 'bagging':
+                self.model = BaggingRegressor(n_estimators=self.n_estimators, random_state=42)
+            elif self.algo == 'adaboost':
+                self.model = AdaBoostRegressor(n_estimators=self.n_estimators, learning_rate=self.learning_rate, random_state=42)
+            elif self.algo == 'gradient_boosting':
+                self.model = GradientBoostingRegressor(n_estimators=self.n_estimators, learning_rate=self.learning_rate, random_state=42)
+        
+        self.model.fit(X, y)
+        return self
+    
+    def predict(self, X):
+        return self.model.predict(X)
+
+class MyKMeans:
+    def __init__(self, n_clusters=3):
+        self.n_clusters = n_clusters
+        self.model = None
+    
+    def fit(self, X):
+        self.model = KMeans(n_clusters=self.n_clusters, random_state=42, n_init=10)
+        self.model.fit(X)
+        return self
+        
+    def predict(self, X):
+        return self.model.predict(X)
+
+# --- NEW: HYPERPARAMETER TUNER ---
+class ModelTuner:
+    def tune(self, estimator, param_grid, X, y, cv=3):
+        """
+        Generic wrapper for GridSearchCV.
+        """
+        grid = GridSearchCV(estimator, param_grid, cv=cv, scoring=None)
+        grid.fit(X, y)
+        return grid.best_params_, grid.best_score_, grid.best_estimator_
+
+    def tune_kmeans(self, X, k_min=2, k_max=10):
+        """
+        Custom tuner for KMeans using Silhouette Score (Unsupervised).
+        """
+        best_k = 2
+        best_score = -1
+        results = {}
+        
+        for k in range(k_min, k_max+1):
+            model = KMeans(n_clusters=k, random_state=42, n_init=10)
+            labels = model.fit_predict(X)
+            score = silhouette_score(X, labels)
+            results[k] = score
+            if score > best_score:
+                best_score = score
+                best_k = k
+        return best_k, best_score, results
 
 class DatasetManager:
     def load_sklearn_dataset(self, name):
@@ -411,6 +485,19 @@ class DatasetManager:
                 n_clusters_per_class=1,
                 random_state=42, 
                 class_sep=separation
+            )
+            cols = [f"Feature_{i+1}" for i in range(n_features)]
+            df = pd.DataFrame(X, columns=cols)
+            df['target'] = y
+            return df
+        
+        elif type == 'clustering':
+            X, y = make_blobs(
+                n_samples=n_samples, 
+                n_features=n_features, 
+                centers=n_classes, 
+                cluster_std=max(0.5, noise/2.0),
+                random_state=42
             )
             cols = [f"Feature_{i+1}" for i in range(n_features)]
             df = pd.DataFrame(X, columns=cols)
